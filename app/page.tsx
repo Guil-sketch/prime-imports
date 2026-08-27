@@ -15,7 +15,6 @@ export default function PrimeVitrine() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [dollarRate, setDollarRate] = useState<number>(5.60);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -23,22 +22,14 @@ export default function PrimeVitrine() {
     async function loadData() {
       setLoading(true);
 
-      // 1. Cotação do Dólar
-      const { data: config } = await supabase
-        .from('store_settings')
-        .select('dollar_rate')
-        .eq('id', 'config')
-        .single();
-      if (config) setDollarRate(Number(config.dollar_rate));
-
-      // 2. Categorias
+      // 1. Categorias
       const { data: catData } = await supabase
         .from('categories')
         .select('*')
         .order('name');
       if (catData) setCategories(catData);
 
-      // 3. Produtos Ativos
+      // 2. Produtos Ativos
       const { data: prodData } = await supabase
         .from('products')
         .select('*')
@@ -64,7 +55,7 @@ export default function PrimeVitrine() {
 
   return (
     <div className="min-h-screen bg-[#0d0e11] text-neutral-100 pb-24 font-sans selection:bg-amber-500 selection:text-black">
-      {/* Top Header */}
+      {/* Top Header com Botão do Admin no Topo */}
       <header className="bg-[#121318]/90 backdrop-blur-md border-b border-neutral-800/80 sticky top-0 z-30">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -77,7 +68,7 @@ export default function PrimeVitrine() {
                   Prime Imports
                 </h1>
                 <span className="bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                  PY DIRECT
+                  OFICIAL
                 </span>
               </div>
               <p className="text-[10px] text-neutral-400 font-medium">
@@ -86,10 +77,14 @@ export default function PrimeVitrine() {
             </div>
           </div>
 
-          <div className="hidden sm:flex items-center gap-2 bg-[#1b1e24] border border-neutral-800 px-3 py-1.5 rounded-xl text-xs">
-            <span className="text-neutral-400">Dólar PY Hoje:</span>
-            <span className="text-amber-400 font-bold font-mono">R$ {dollarRate.toFixed(2)}</span>
-          </div>
+          {/* Botão de Acesso ao Painel Admin no Topo */}
+          <Link
+            href="/admin"
+            className="inline-flex items-center gap-1.5 bg-[#1b1e24] hover:bg-amber-500 hover:text-black text-neutral-300 border border-neutral-800 px-3.5 py-2 rounded-xl text-xs font-semibold transition"
+          >
+            <Lock className="w-3.5 h-3.5" />
+            <span>Painel Admin</span>
+          </Link>
         </div>
       </header>
 
@@ -99,7 +94,7 @@ export default function PrimeVitrine() {
           <div className="max-w-2xl relative z-10">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-semibold mb-3">
               <Sparkles className="w-3.5 h-3.5" />
-              Preços de Importação Direta
+              Catálogo Oficial Exclusivo
             </div>
             <h2 className="text-2xl sm:text-4xl font-black text-white tracking-tight leading-tight">
               Os melhores produtos com garantia e procedência oficial.
@@ -109,7 +104,6 @@ export default function PrimeVitrine() {
             </p>
           </div>
 
-          {/* Destaques Rápido */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-6 pt-6 border-t border-neutral-800/60">
             <div className="flex items-center gap-2.5 text-xs text-neutral-300">
               <ShieldCheck className="w-4 h-4 text-emerald-400" />
@@ -140,7 +134,7 @@ export default function PrimeVitrine() {
           />
         </div>
 
-        {/* Categorias Pills */}
+        {/* Categorias */}
         <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
           <button
             onClick={() => setSelectedCategory('all')}
@@ -168,7 +162,7 @@ export default function PrimeVitrine() {
         </div>
       </div>
 
-      {/* Catálogo Grid */}
+      {/* Grade de Produtos */}
       <main className="max-w-6xl mx-auto px-4 sm:px-6">
         {loading ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 py-6">
@@ -183,7 +177,7 @@ export default function PrimeVitrine() {
           <div className="text-center py-20 bg-[#15171c] rounded-3xl border border-neutral-800/80 mt-2">
             <p className="text-sm font-bold text-white">Nenhum produto encontrado</p>
             <p className="text-xs text-neutral-500 mt-1">
-              Cadastre novos itens no painel de administração para exibir aqui.
+              Cadastre novos itens no painel administrativo para exibir aqui.
             </p>
           </div>
         ) : (
@@ -195,25 +189,14 @@ export default function PrimeVitrine() {
         )}
       </main>
 
-      {/* Rodapé Discreto com Acesso Admin */}
-      <footer className="max-w-6xl mx-auto px-4 sm:px-6 py-10 mt-12 border-t border-neutral-800/60">
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-          <p className="text-[11px] text-neutral-500">
-            © {new Date().getFullYear()} Prime Imports. Todos os direitos reservados.
-          </p>
-
-          <Link
-            href="/admin"
-            className="inline-flex items-center gap-1.5 text-neutral-600 hover:text-neutral-300 text-xs transition"
-            title="Acesso Administrativo"
-          >
-            <Lock className="w-3.5 h-3.5" />
-            <span className="text-[11px]">Painel Admin</span>
-          </Link>
-        </div>
+      {/* Rodapé */}
+      <footer className="max-w-6xl mx-auto px-4 sm:px-6 py-10 mt-12 border-t border-neutral-800/60 text-center">
+        <p className="text-[11px] text-neutral-500">
+          © {new Date().getFullYear()} Prime Imports. Todos os direitos reservados.
+        </p>
       </footer>
 
-      {/* Carrinho Flutuante e Drawer */}
+      {/* Sacola Flutuante e Modal */}
       <FloatingCartButton onClick={() => setIsCartOpen(true)} />
       <CartDrawer isOpen={isCartOpen} onClose={() => setIsCartOpen(false)} />
     </div>
