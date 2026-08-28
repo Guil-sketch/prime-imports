@@ -15,8 +15,7 @@ import {
   TrendingUp,
   Download,
   RefreshCw,
-  ShoppingBag,
-  Percent
+  Lock
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -64,15 +63,23 @@ export default function AdminPage() {
       if (config) setDollarRate(Number(config.dollar_rate));
 
       // Categorias
-      const { data: cats } = await supabase.from('categories').select('*').order('name');
+      const { data: cats } = await supabase
+        .from('categories')
+        .select('*')
+        .order('name');
       if (cats) setCategories(cats);
 
-      // Produtos
-      const { data: prods } = await supabase
+      // Produtos (busca direta e estável)
+      const { data: prods, error: prodErr } = await supabase
         .from('products')
-        .select('*, product_variants(*)')
+        .select('*')
         .order('created_at', { ascending: false });
-      if (prods) setProducts(prods as Product[]);
+
+      if (prodErr) {
+        console.error('Erro ao carregar produtos:', prodErr);
+      } else if (prods) {
+        setProducts(prods as Product[]);
+      }
 
       // Pedidos
       const { data: ords } = await supabase
@@ -246,7 +253,7 @@ export default function AdminPage() {
               : 'bg-[#15171c] text-neutral-400 hover:text-white border border-neutral-800'
           }`}
         >
-          <Package className="w-4 h-4" /> Gestão de Catálogo
+          <Package className="w-4 h-4" /> Gestão de Catálogo ({products.length})
         </button>
         <button
           onClick={() => setActiveTab('reports')}
@@ -272,7 +279,7 @@ export default function AdminPage() {
               <form onSubmit={handleCreateCategory} className="flex gap-2">
                 <input
                   type="text"
-                  placeholder="Ex: iPhones, Caixas de Som..."
+                  placeholder="Ex: iPhones, Perfumes, Xiaomi..."
                   value={newCatName}
                   onChange={(e) => setNewCatName(e.target.value)}
                   className="flex-1 text-xs p-2.5 rounded-xl border border-neutral-800 bg-[#1b1e24] text-white focus:outline-none focus:border-amber-500"
