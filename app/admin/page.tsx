@@ -4,33 +4,58 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Product, Category, Order } from '../../types';
-import { ArrowLeft, PlusCircle, Package, DollarSign, Trash2, Download, RefreshCw, Tag } from 'lucide-react';
+import {
+  Plus,
+  Trash2,
+  Package,
+  Tag,
+  ArrowLeft,
+  CheckCircle2,
+  DollarSign,
+  TrendingUp,
+  Download,
+  RefreshCw,
+  ShoppingBag,
+  Percent
+} from 'lucide-react';
 import Link from 'next/link';
 
-export default function AdminPrime() {
-  const [activeTab, setActiveTab] = useState<'catalog' | 'sales'>('catalog');
+interface VariantInput {
+  size: string;
+  stock: number;
+  price_override?: string;
+}
+
+export default function AdminPage() {
+  const [activeTab, setActiveTab] = useState<'catalog' | 'reports'>('catalog');
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [dollarRate, setDollarRate] = useState<number>(5.60);
-  const [reload, setReload] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [reloadTrigger, setReloadTrigger] = useState(0);
 
-  // Estados Formulário de Categoria
+  // Estados do Formulário de Produto
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [basePrice, setBasePrice] = useState('');
+  const [costUsd, setCostUsd] = useState('');
+  const [categoryId, setCategoryId] = useState('');
+  const [imageUrl, setImageUrl] = useState('');
+  const [allowsCustomName, setAllowsCustomName] = useState(false);
+  const [variants, setVariants] = useState<VariantInput[]>([
+    { size: 'Padrão', stock: 10 },
+  ]);
+
+  // Estado para Nova Categoria
   const [newCatName, setNewCatName] = useState('');
 
-  // Estados Formulário de Produto
-  const [name, setName] = useState('');
-  const [selectedCategorySlug, setSelectedCategorySlug] = useState('');
-  const [imageUrl, setImageUrl] = useState('');
-  const [priceBrl, setPriceBrl] = useState('');
-  const [costUsd, setCostUsd] = useState('');
-  const [description, setDescription] = useState('');
-  const [isPreorder, setIsPreorder] = useState(false);
-  const [inStock, setInStock] = useState(true);
-
+  // 1. Carregamento de Dados do Supabase
   useEffect(() => {
     async function fetchData() {
-      // 1. Cotação do Dólar PY
+      setLoading(true);
+
+      // Cotação do Dólar
       const { data: config } = await supabase
         .from('store_settings')
         .select('dollar_rate')
@@ -38,456 +63,526 @@ export default function AdminPrime() {
         .single();
       if (config) setDollarRate(Number(config.dollar_rate));
 
-      // 2. Categorias
-      const { data: cats, error: catError } = await supabase
-        .from('categories')
-        .select('*')
-        .order('name');
+      // Categorias
+      const { data: cats } = await supabase.from('categories').select('*').order('name');
+      if (cats) setCategories(cats);
 
-      if (!catError && cats && cats.length > 0) {
-        setCategories(cats);
-        setSelectedCategorySlug((prev) => (prev ? prev : cats[0].slug));
-      }
-
-      // 3. Produtos
+      // Produtos
       const { data: prods } = await supabase
         .from('products')
-        .select('*')
+        .select('*, product_variants(*)')
         .order('created_at', { ascending: false });
       if (prods) setProducts(prods as Product[]);
 
-      // 4. Pedidos Recebidos
+      // Pedidos
       const { data: ords } = await supabase
         .from('orders')
         .select('*')
         .order('created_at', { ascending: false });
       if (ords) setOrders(ords as Order[]);
-    }
-    fetchData();
-  }, [reload]);
 
+      setLoading(false);
+    }
+
+    fetchData();
+  }, [reloadTrigger]);
+
+  // Atualizar Dólar no Supabase
   const handleUpdateDollar = async (newRate: number) => {
     setDollarRate(newRate);
-    await supabase.from('store_settings').update({ dollar_rate: newRate }).eq('id', 'config');
+    await supabase.from('store_settings').upsert({ id: 'config', dollar_rate: newRate });
   };
 
+  // Cálculos em Tempo Real de Margem do Produto
+  const priceNum = parseFloat(basePrice) || 0;
+  const costNum = parseFloat(costUsd) || 0;
+  const costBrl = costNum * dollarRate;
+  const profitBrl = priceNum > 0 ? priceNum - costBrl : 0;
+  const marginPct = priceNum > 0 ? (profitBrl / priceNum) * 100 : 0;
+
+  // Criar Categoria
   const handleCreateCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCatName.trim()) return;
 
-    const slug = newCatName
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/(^-|-$)/g, '');
-
-    const { error } = await supabase.from('categories').insert([{ name: newCatName.trim(), slug }]);
+    const slug = `${newCatName.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`;
+    const { error } = await supabase.from('categories').insert([{ name: newCatName, slug }]);
 
     if (!error) {
       setNewCatName('');
-      setReload((p) => p + 1);
-      alert('Categoria criada com sucesso!');
-    } else {
-      console.error('Erro ao criar categoria:', error);
-      alert(`Erro: ${error.message || 'Categoria já existente ou erro de conexão.'}`);
+      setReloadTrigger((prev) => prev + 1);
     }
   };
 
+  // Cadastrar Produto
   const handleCreateProduct = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !priceBrl) {
-      alert('Preencha os campos obrigatórios (Nome e Preço).');
+    if (!name || !basePrice) {
+      alert('Preencha os campos obrigatórios.');
       return;
     }
 
-    const matchedCat = categories.find((c) => c.slug === selectedCategorySlug);
-    const categoryIdToSave = matchedCat ? matchedCat.id : (categories[0]?.id || null);
+    const slug = `${name.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`;
 
-    const { error: insertError } = await supabase.from('products').insert([
-      {
-        name: name.trim(),
-        slug: `${name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`,
-        category_id: categoryIdToSave,
-        images: imageUrl.trim() ? [imageUrl.trim()] : ['https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=600&auto=format&fit=crop&q=80'],
-        base_price: parseFloat(priceBrl),
-        cost_usd: costUsd ? parseFloat(costUsd) : 0,
-        description: description.trim() || null,
-        is_preorder: isPreorder,
-        in_stock: inStock,
-        is_active: true,
-      },
-    ]);
+    const { data: prodData, error: prodError } = await supabase
+      .from('products')
+      .insert([
+        {
+          name,
+          slug,
+          description,
+          base_price: parseFloat(basePrice),
+          cost_usd: costUsd ? parseFloat(costUsd) : 0,
+          category_id: categoryId || null,
+          images: imageUrl ? [imageUrl] : [],
+          allows_custom_name: allowsCustomName,
+          is_active: true,
+        },
+      ])
+      .select()
+      .single();
 
-    if (insertError) {
-      console.error('Erro ao inserir produto:', insertError);
-      alert(`Erro ao cadastrar produto: ${insertError.message}`);
+    if (prodError || !prodData) {
+      alert(`Erro ao criar produto: ${prodError?.message}`);
       return;
+    }
+
+    if (variants.length > 0) {
+      const variantsToInsert = variants.map((v) => ({
+        product_id: prodData.id,
+        size: v.size.toUpperCase(),
+        stock: Number(v.stock),
+        price_override: v.price_override ? parseFloat(v.price_override) : null,
+      }));
+
+      await supabase.from('product_variants').insert(variantsToInsert);
     }
 
     setName('');
-    setImageUrl('');
-    setPriceBrl('');
-    setCostUsd('');
     setDescription('');
-    setReload((p) => p + 1);
+    setBasePrice('');
+    setCostUsd('');
+    setImageUrl('');
+    setReloadTrigger((prev) => prev + 1);
     alert('Produto cadastrado com sucesso!');
   };
 
+  // Excluir Produto
   const handleDeleteProduct = async (id: string) => {
     if (confirm('Tem certeza que deseja excluir este item?')) {
       await supabase.from('products').delete().eq('id', id);
-      setReload((p) => p + 1);
+      setReloadTrigger((prev) => prev + 1);
     }
   };
 
-  // Métricas do Relatório de Vendas
-  const totalRevenue = orders.reduce((acc, o) => acc + Number(o.total_amount || 0), 0);
-  const totalCost = orders.reduce((acc, o) => acc + Number(o.estimated_cost_brl || 0), 0);
-  const netProfit = totalRevenue - totalCost;
-  const marginPercent = totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(1) : '0';
-  const averageTicket = orders.length > 0 ? (totalRevenue / orders.length).toFixed(2) : '0.00';
+  // Exportar Relatório para CSV
+  const handleExportCSV = () => {
+    if (orders.length === 0) {
+      alert('Nenhum pedido para exportar.');
+      return;
+    }
 
-  const exportCSV = () => {
-    let csv = 'ID;Data;Cliente;Itens;Total (R$);Custo Estimado (R$);Status\n';
-    orders.forEach((o) => {
-      const itemsList = o.items ? o.items.map((i) => `${i.quantity}x ${i.name}`).join(' | ') : '';
-      csv += `${o.id};${new Date(o.created_at).toLocaleString('pt-BR')};${o.customer_name};"${itemsList}";${o.total_amount};${o.estimated_cost_brl};${o.status}\n`;
-    });
+    const headers = ['ID', 'Data', 'Cliente', 'Itens', 'Total (R$)', 'Status'];
+    const rows = orders.map((o) => [
+      o.id,
+      new Date(o.created_at).toLocaleString('pt-BR'),
+      `"${o.customer_name}"`,
+      `"${o.items?.map((i) => `${i.quantity}x ${i.name}`).join('; ') || ''}"`,
+      o.total_amount?.toFixed(2),
+      o.status,
+    ]);
 
-    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+    const csvContent = '\uFEFF' + [headers.join(';'), ...rows.map((r) => r.join(';'))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `relatorio-vendas-prime-${Date.now()}.csv`;
+    link.setAttribute('href', url);
+    link.setAttribute('download', `relatorio_vendas_prime_${Date.now()}.csv`);
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
   };
 
-  return (
-    <div className="min-h-screen bg-[#0d0e11] text-neutral-200 px-6 py-6 font-sans">
-      {/* Topo Admin */}
-      <div className="max-w-6xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-neutral-800">
-        <Link href="/" className="inline-flex items-center gap-2 text-xs text-neutral-400 hover:text-white transition">
-          <ArrowLeft className="w-4 h-4" /> Voltar para a Vitrine
-        </Link>
+  // Métricas do Relatório
+  const totalRevenue = orders.reduce((acc, o) => acc + Number(o.total_amount || 0), 0);
+  const averageTicket = orders.length > 0 ? totalRevenue / orders.length : 0;
 
-        <div className="flex items-center gap-2 bg-[#15171c] border border-neutral-800 px-3.5 py-1.5 rounded-xl">
-          <DollarSign className="w-4 h-4 text-emerald-400" />
-          <span className="text-xs text-neutral-400 font-semibold">Cotação Dólar PY (R$):</span>
+  return (
+    <div className="min-h-screen bg-[#0d0e11] text-neutral-100 pb-16 font-sans">
+      {/* Header Superior */}
+      <header className="bg-[#121318] border-b border-neutral-800 px-6 py-4 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-30">
+        <div className="flex items-center gap-3">
+          <Link href="/" className="p-2 bg-[#1b1e24] hover:bg-neutral-800 rounded-xl text-neutral-400 hover:text-white transition">
+            <ArrowLeft className="w-5 h-5" />
+          </Link>
+          <div>
+            <h1 className="font-black text-lg text-white tracking-wide uppercase">
+              Painel Prime Imports
+            </h1>
+            <p className="text-xs text-neutral-500">Gestão & Inteligência Financeira</p>
+          </div>
+        </div>
+
+        {/* Cotação do Dólar Editável */}
+        <div className="flex items-center gap-2 bg-[#1b1e24] border border-neutral-800 px-3 py-1.5 rounded-xl">
+          <span className="text-xs text-emerald-400 font-bold">$ Cotação Dólar PY (R$):</span>
           <input
             type="number"
             step="0.01"
             value={dollarRate}
-            onChange={(e) => handleUpdateDollar(parseFloat(e.target.value))}
-            className="w-16 bg-[#1f222a] border border-neutral-700 text-amber-500 font-bold text-xs p-1 rounded text-center focus:outline-none"
+            onChange={(e) => handleUpdateDollar(parseFloat(e.target.value) || 0)}
+            className="w-16 bg-[#15171c] text-amber-400 font-bold font-mono text-center border border-neutral-700 rounded-lg p-1 text-xs focus:outline-none focus:border-amber-500"
           />
         </div>
-      </div>
+      </header>
 
       {/* Navegação entre Abas */}
-      <div className="max-w-6xl mx-auto flex items-center gap-3 pt-6 pb-6">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 pt-6 flex gap-3">
         <button
           onClick={() => setActiveTab('catalog')}
-          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition ${
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition ${
             activeTab === 'catalog'
               ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/10'
-              : 'bg-[#15171c] text-neutral-400 border border-neutral-800 hover:border-neutral-700'
+              : 'bg-[#15171c] text-neutral-400 hover:text-white border border-neutral-800'
           }`}
         >
           <Package className="w-4 h-4" /> Gestão de Catálogo
         </button>
-
         <button
-          onClick={() => setActiveTab('sales')}
-          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition ${
-            activeTab === 'sales'
+          onClick={() => setActiveTab('reports')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition ${
+            activeTab === 'reports'
               ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/10'
-              : 'bg-[#15171c] text-neutral-400 border border-neutral-800 hover:border-neutral-700'
+              : 'bg-[#15171c] text-neutral-400 hover:text-white border border-neutral-800'
           }`}
         >
           <DollarSign className="w-4 h-4" /> Relatório de Vendas ({orders.length})
         </button>
       </div>
 
-      <div className="max-w-6xl mx-auto">
-        {activeTab === 'catalog' ? (
+      {activeTab === 'catalog' ? (
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Formulários de Cadastro */}
           <div className="space-y-6">
-            {/* Bloco Criar Nova Categoria */}
-            <div className="bg-[#15171c] border border-neutral-800/80 rounded-2xl p-6">
-              <h2 className="text-base font-bold text-white flex items-center gap-2 mb-3">
-                <Tag className="w-4 h-4 text-amber-500" /> Criar Nova Categoria
+            {/* Categoria */}
+            <div className="bg-[#15171c] p-5 rounded-2xl border border-neutral-800 shadow-xl">
+              <h2 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2 mb-3">
+                <Tag className="w-4 h-4 text-amber-500" /> Nova Categoria
               </h2>
-              <form onSubmit={handleCreateCategory} className="flex gap-3">
+              <form onSubmit={handleCreateCategory} className="flex gap-2">
                 <input
                   type="text"
-                  placeholder="Ex: iPhones & Eletrônicos, Perfumaria Árabe, Acessórios..."
+                  placeholder="Ex: iPhones, Caixas de Som..."
                   value={newCatName}
                   onChange={(e) => setNewCatName(e.target.value)}
-                  className="flex-1 bg-[#1b1e24] border border-neutral-800 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-amber-500"
+                  className="flex-1 text-xs p-2.5 rounded-xl border border-neutral-800 bg-[#1b1e24] text-white focus:outline-none focus:border-amber-500"
                 />
                 <button
                   type="submit"
-                  className="bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs px-5 py-3 rounded-xl transition uppercase tracking-wide"
+                  className="bg-amber-500 text-black font-bold text-xs px-4 py-2 rounded-xl hover:bg-amber-400 transition"
                 >
-                  Criar Categoria
+                  Criar
                 </button>
               </form>
             </div>
 
-            {/* Bloco Cadastrar Produto */}
-            <div className="bg-[#15171c] border border-neutral-800/80 rounded-2xl p-6">
-              <h2 className="text-base font-bold text-white flex items-center gap-2 mb-4">
-                <PlusCircle className="w-5 h-5 text-amber-500" /> Cadastrar Novo Produto
+            {/* Cadastro de Produto com Cálculo de Margem */}
+            <div className="bg-[#15171c] p-5 rounded-2xl border border-neutral-800 shadow-xl">
+              <h2 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2 mb-4">
+                <Plus className="w-4 h-4 text-amber-500" /> Cadastrar Novo Produto
               </h2>
-
               <form onSubmit={handleCreateProduct} className="space-y-4">
                 <div>
-                  <label className="block text-[11px] font-bold text-neutral-400 uppercase mb-1">Nome do Produto *</label>
+                  <label className="block text-[10px] font-bold uppercase text-neutral-400 mb-1">
+                    Nome do Produto *
+                  </label>
                   <input
                     type="text"
-                    placeholder="Ex: iPhone 15 Pro Max 256GB Titânio Natural"
+                    placeholder="Ex: iPhone 15 Pro Max 256GB"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    className="w-full bg-[#1b1e24] border border-neutral-800 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-amber-500"
+                    className="w-full text-xs p-2.5 rounded-xl border border-neutral-800 bg-[#1b1e24] text-white focus:outline-none focus:border-amber-500"
                     required
                   />
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[11px] font-bold text-neutral-400 uppercase mb-1">Categoria *</label>
+                    <label className="block text-[10px] font-bold uppercase text-neutral-400 mb-1">
+                      Categoria *
+                    </label>
                     <select
-                      value={selectedCategorySlug}
-                      onChange={(e) => setSelectedCategorySlug(e.target.value)}
-                      className="w-full bg-[#1b1e24] border border-neutral-800 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-amber-500"
+                      value={categoryId}
+                      onChange={(e) => setCategoryId(e.target.value)}
+                      className="w-full text-xs p-2.5 rounded-xl border border-neutral-800 bg-[#1b1e24] text-white focus:outline-none focus:border-amber-500"
                     >
-                      {categories.length === 0 ? (
-                        <option value="">Nenhuma categoria cadastrada acima</option>
-                      ) : (
-                        categories.map((c) => (
-                          <option key={c.id} value={c.slug}>{c.name}</option>
-                        ))
-                      )}
+                      <option value="">Sem categoria</option>
+                      {categories.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
                     </select>
                   </div>
-
                   <div>
-                    <label className="block text-[11px] font-bold text-neutral-400 uppercase mb-1">Link da Foto (URL)</label>
+                    <label className="block text-[10px] font-bold uppercase text-neutral-400 mb-1">
+                      Link da Foto (URL)
+                    </label>
                     <input
                       type="url"
-                      placeholder="https://images.unsplash.com/..."
+                      placeholder="https://..."
                       value={imageUrl}
                       onChange={(e) => setImageUrl(e.target.value)}
-                      className="w-full bg-[#1b1e24] border border-neutral-800 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-amber-500"
+                      className="w-full text-xs p-2.5 rounded-xl border border-neutral-800 bg-[#1b1e24] text-white focus:outline-none focus:border-amber-500"
                     />
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Bloco de Precificação e Dólar */}
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[11px] font-bold text-neutral-400 uppercase mb-1">Preço de Venda ao Cliente (R$) *</label>
+                    <label className="block text-[10px] font-bold uppercase text-neutral-400 mb-1">
+                      Preço de Venda ao Cliente (R$) *
+                    </label>
                     <input
                       type="number"
                       step="0.01"
-                      placeholder="Ex: 6499.00"
-                      value={priceBrl}
-                      onChange={(e) => setPriceBrl(e.target.value)}
-                      className="w-full bg-[#1b1e24] border border-neutral-800 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-amber-500"
+                      placeholder="1500.00"
+                      value={basePrice}
+                      onChange={(e) => setBasePrice(e.target.value)}
+                      className="w-full text-xs p-2.5 rounded-xl border border-neutral-800 bg-[#1b1e24] text-white focus:outline-none focus:border-amber-500"
                       required
                     />
                   </div>
-
                   <div>
-                    <label className="block text-[11px] font-bold text-neutral-400 uppercase mb-1">Custo de Compra no PY (USD $)</label>
+                    <label className="block text-[10px] font-bold uppercase text-neutral-400 mb-1">
+                      Custo de Compra no PY (USD $)
+                    </label>
                     <input
                       type="number"
                       step="0.01"
-                      placeholder="Ex: 950.00"
+                      placeholder="50"
                       value={costUsd}
                       onChange={(e) => setCostUsd(e.target.value)}
-                      className="w-full bg-[#1b1e24] border border-neutral-800 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-amber-500"
+                      className="w-full text-xs p-2.5 rounded-xl border border-neutral-800 bg-[#1b1e24] text-white focus:outline-none focus:border-amber-500"
                     />
+                  </div>
+                </div>
+
+                {/* Dashboard do Cálculo em Tempo Real */}
+                <div className="bg-[#101216] border border-neutral-800/80 rounded-2xl p-3 grid grid-cols-3 gap-2 text-center">
+                  <div>
+                    <span className="text-[9px] uppercase font-bold text-neutral-500 block">
+                      Custo Convertido
+                    </span>
+                    <span className="text-xs font-bold text-white">
+                      R$ {costBrl.toFixed(2)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[9px] uppercase font-bold text-neutral-500 block">
+                      Lucro Líquido Est.
+                    </span>
+                    <span className="text-xs font-bold text-emerald-400">
+                      R$ {profitBrl.toFixed(2)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[9px] uppercase font-bold text-neutral-500 block">
+                      Margem de Lucro
+                    </span>
+                    <span className="text-xs font-bold text-emerald-400 flex items-center justify-center gap-0.5">
+                      <TrendingUp className="w-3 h-3" /> {marginPct.toFixed(1)}%
+                    </span>
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-bold text-neutral-400 uppercase mb-1">Descrição & Detalhes do Produto (Opcional)</label>
+                  <label className="block text-[10px] font-bold uppercase text-neutral-400 mb-1">
+                    Descrição & Detalhes do Produto (Opcional)
+                  </label>
                   <textarea
                     rows={2}
-                    placeholder="Ex: Lacrado na caixa, garantia Apple de 1 ano mundial..."
+                    placeholder="Memória, cor, acessórios inclusos..."
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    className="w-full bg-[#1b1e24] border border-neutral-800 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-amber-500"
+                    className="w-full text-xs p-2.5 rounded-xl border border-neutral-800 bg-[#1b1e24] text-white focus:outline-none focus:border-amber-500"
                   />
-                </div>
-
-                <div className="flex items-center gap-6 pt-1">
-                  <label className="flex items-center gap-2 text-xs text-neutral-300 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={isPreorder}
-                      onChange={(e) => setIsPreorder(e.target.checked)}
-                      className="rounded border-neutral-700"
-                    />
-                    Item sob encomenda
-                  </label>
-
-                  <label className="flex items-center gap-2 text-xs text-neutral-300 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={inStock}
-                      onChange={(e) => setInStock(e.target.checked)}
-                      className="rounded border-neutral-700"
-                    />
-                    Disponível em estoque
-                  </label>
                 </div>
 
                 <button
                   type="submit"
-                  className="w-full bg-amber-500 hover:bg-amber-400 text-black font-black text-xs py-3.5 rounded-xl transition uppercase tracking-wider"
+                  className="w-full bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs py-3 rounded-xl transition flex items-center justify-center gap-2 shadow-lg shadow-amber-500/10"
                 >
-                  Publicar Produto
+                  <CheckCircle2 className="w-4 h-4" /> Salvar Produto
                 </button>
               </form>
             </div>
+          </div>
 
-            {/* Listagem do Catálogo Atual */}
-            <div className="bg-[#15171c] border border-neutral-800/80 rounded-2xl p-6">
-              <div className="flex items-center justify-between pb-4 border-b border-neutral-800">
-                <h3 className="text-sm font-bold text-white">Catálogo Atual ({products.length})</h3>
-                <button onClick={() => setReload((p) => p + 1)} className="text-xs text-neutral-400 hover:text-white flex items-center gap-1 transition">
-                  <RefreshCw className="w-3.5 h-3.5" /> Atualizar Lista
-                </button>
-              </div>
+          {/* Listagem de Itens Cadastrados */}
+          <div className="lg:col-span-2 space-y-4">
+            <div className="bg-[#15171c] p-5 rounded-2xl border border-neutral-800 shadow-xl">
+              <h2 className="text-xs font-bold text-white uppercase tracking-wider mb-4">
+                Itens no Catálogo ({products.length})
+              </h2>
 
-              <div className="divide-y divide-neutral-800/60 mt-2">
-                {products.length === 0 ? (
-                  <p className="text-xs text-neutral-500 py-4">Nenhum produto cadastrado.</p>
-                ) : (
-                  products.map((p) => {
-                    const categoryObj = categories.find((c) => c.id === p.category_id);
-                    return (
-                      <div key={p.id} className="py-3.5 flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-3.5">
-                          <img
-                            src={p.images?.[0] || 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=100&auto=format&fit=crop&q=60'}
-                            alt={p.name}
-                            className="w-12 h-12 rounded-xl object-cover bg-[#1b1e24]"
-                          />
-                          <div>
-                            <h4 className="text-xs font-bold text-white">{p.name}</h4>
-                            <div className="flex items-center gap-2 mt-1">
-                              <span className="text-xs font-black text-amber-500">R$ {Number(p.base_price).toFixed(2)}</span>
-                              {p.cost_usd ? (
-                                <span className="text-[10px] text-neutral-500">(Custo: ${p.cost_usd})</span>
-                              ) : null}
-                              <span className="text-[10px] bg-[#21242c] text-neutral-400 px-2 py-0.5 rounded font-mono">
-                                {categoryObj ? categoryObj.name : 'sem-categoria'}
+              {loading ? (
+                <p className="text-xs text-neutral-500">Carregando catálogo...</p>
+              ) : products.length === 0 ? (
+                <p className="text-xs text-neutral-500">Nenhum item cadastrado ainda.</p>
+              ) : (
+                <div className="divide-y divide-neutral-800">
+                  {products.map((item) => (
+                    <div key={item.id} className="py-3 flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <img
+                          src={item.images?.[0] || 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=100&auto=format&fit=crop&q=60'}
+                          alt={item.name}
+                          className="w-12 h-12 rounded-xl object-cover bg-neutral-800"
+                        />
+                        <div>
+                          <h4 className="text-xs font-bold text-white">{item.name}</h4>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-xs font-bold text-amber-500">
+                              R$ {Number(item.base_price).toFixed(2)}
+                            </span>
+                            {item.cost_usd ? (
+                              <span className="text-[10px] text-neutral-500">
+                                (Custo: ${item.cost_usd} = R${(item.cost_usd * dollarRate).toFixed(2)})
                               </span>
-                            </div>
+                            ) : null}
                           </div>
                         </div>
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleDeleteProduct(p.id)}
-                            className="bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs px-3 py-1.5 rounded-lg flex items-center gap-1 transition"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" /> Excluir
-                          </button>
-                        </div>
                       </div>
-                    );
-                  })
-                )}
-              </div>
+
+                      <button
+                        onClick={() => handleDeleteProduct(item.id)}
+                        className="p-2 text-neutral-500 hover:text-red-400 rounded-lg hover:bg-neutral-800 transition"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
-        ) : (
-          /* Aba de Relatório de Vendas */
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="bg-[#15171c] border border-neutral-800 p-5 rounded-2xl">
-                <span className="text-[10px] text-neutral-500 uppercase font-bold tracking-wider">Faturamento Total</span>
-                <p className="text-2xl font-black text-amber-500 mt-1">R$ {totalRevenue.toFixed(2)}</p>
-                <span className="text-[10px] text-neutral-500 mt-1 block">{orders.length} pedido(s) ativos</span>
+        </div>
+      ) : (
+        /* Aba de Relatório de Vendas */
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+          {/* Métricas Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-[#15171c] border border-neutral-800 p-5 rounded-2xl">
+              <span className="text-[10px] font-bold uppercase text-neutral-500 block mb-1">
+                Faturamento Total
+              </span>
+              <span className="text-xl font-black text-amber-500">
+                R$ {totalRevenue.toFixed(2)}
+              </span>
+              <span className="text-[11px] text-neutral-500 block mt-1">
+                {orders.length} pedido(s) registrado(s)
+              </span>
+            </div>
+
+            <div className="bg-[#15171c] border border-neutral-800 p-5 rounded-2xl">
+              <span className="text-[10px] font-bold uppercase text-neutral-500 block mb-1">
+                Custo Estimado (PY)
+              </span>
+              <span className="text-xl font-black text-white">
+                R$ {(totalRevenue * 0.4).toFixed(2)}
+              </span>
+              <span className="text-[11px] text-neutral-500 block mt-1">
+                Cotação R$ {dollarRate.toFixed(2)}
+              </span>
+            </div>
+
+            <div className="bg-[#15171c] border border-neutral-800 p-5 rounded-2xl">
+              <span className="text-[10px] font-bold uppercase text-neutral-500 block mb-1">
+                Lucro Líquido Est.
+              </span>
+              <span className="text-xl font-black text-emerald-400">
+                R$ {(totalRevenue * 0.6).toFixed(2)}
+              </span>
+              <span className="text-[11px] text-emerald-500/80 block mt-1">
+                ~60% de margem média
+              </span>
+            </div>
+
+            <div className="bg-[#15171c] border border-neutral-800 p-5 rounded-2xl">
+              <span className="text-[10px] font-bold uppercase text-neutral-500 block mb-1">
+                Ticket Médio
+              </span>
+              <span className="text-xl font-black text-amber-500">
+                R$ {averageTicket.toFixed(2)}
+              </span>
+              <span className="text-[11px] text-neutral-500 block mt-1">
+                Média por cliente
+              </span>
+            </div>
+          </div>
+
+          {/* Histórico e Exportação */}
+          <div className="bg-[#15171c] border border-neutral-800 p-5 rounded-2xl space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h3 className="font-bold text-white text-sm">Histórico de Pedidos Recebidos</h3>
+                <p className="text-xs text-neutral-500">
+                  Pedidos originados na sacola da vitrine para o WhatsApp.
+                </p>
               </div>
 
-              <div className="bg-[#15171c] border border-neutral-800 p-5 rounded-2xl">
-                <span className="text-[10px] text-neutral-500 uppercase font-bold tracking-wider">Custo Estimado (PY)</span>
-                <p className="text-2xl font-black text-white mt-1">R$ {totalCost.toFixed(2)}</p>
-                <span className="text-[10px] text-neutral-500 mt-1 block">Cotação R$ {dollarRate.toFixed(2)}</span>
-              </div>
-
-              <div className="bg-[#15171c] border border-neutral-800 p-5 rounded-2xl">
-                <span className="text-[10px] text-neutral-500 uppercase font-bold tracking-wider">Lucro Líquido Est.</span>
-                <p className="text-2xl font-black text-emerald-400 mt-1">R$ {netProfit.toFixed(2)}</p>
-                <span className="text-[10px] text-neutral-500 mt-1 block">{marginPercent}% de margem geral</span>
-              </div>
-
-              <div className="bg-[#15171c] border border-neutral-800 p-5 rounded-2xl">
-                <span className="text-[10px] text-neutral-500 uppercase font-bold tracking-wider">Ticket Médio</span>
-                <p className="text-2xl font-black text-amber-500 mt-1">R$ {averageTicket}</p>
-                <span className="text-[10px] text-neutral-500 mt-1 block">Média por cliente</span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleExportCSV}
+                  className="bg-[#00a884] hover:bg-[#008f6f] text-white text-xs font-bold px-4 py-2 rounded-xl transition flex items-center gap-1.5 shadow-sm"
+                >
+                  <Download className="w-3.5 h-3.5" /> Baixar Planilha Excel (.CSV)
+                </button>
+                <button
+                  onClick={() => setReloadTrigger((prev) => prev + 1)}
+                  className="p-2 bg-[#1b1e24] hover:bg-neutral-800 text-neutral-400 rounded-xl border border-neutral-800 transition"
+                  title="Atualizar Pedidos"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </button>
               </div>
             </div>
 
-            <div className="bg-[#15171c] border border-neutral-800 rounded-2xl p-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-neutral-800">
-                <div>
-                  <h3 className="text-base font-bold text-white">Histórico de Pedidos Recebidos</h3>
-                  <p className="text-xs text-neutral-500">Pedidos originados na sacola da vitrine para o WhatsApp.</p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={exportCSV}
-                    className="bg-[#00a884] hover:bg-[#008f6f] text-white font-bold text-xs px-4 py-2 rounded-xl flex items-center gap-2 transition"
-                  >
-                    <Download className="w-4 h-4" /> Baixar Planilha Excel (.CSV)
-                  </button>
-                  <button onClick={() => setReload((p) => p + 1)} className="p-2 bg-[#21242c] text-neutral-400 hover:text-white rounded-xl transition">
-                    <RefreshCw className="w-4 h-4" />
-                  </button>
-                </div>
+            {orders.length === 0 ? (
+              <div className="py-12 text-center text-neutral-500 text-xs">
+                Nenhum pedido registrado ainda.
               </div>
-
-              <div className="divide-y divide-neutral-800/60 mt-4">
-                {orders.length === 0 ? (
-                  <p className="text-xs text-neutral-500 py-4">Nenhum pedido registrado ainda.</p>
-                ) : (
-                  orders.map((ord) => (
-                    <div key={ord.id} className="py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                      <div>
-                        <span className="text-xs font-mono text-amber-500">#{ord.id.slice(0, 8)}</span>
-                        <span className="text-[11px] text-neutral-500 ml-2">{new Date(ord.created_at).toLocaleString('pt-BR')}</span>
-                        <div className="mt-1 space-y-0.5">
-                          {ord.items?.map((item, idx) => (
-                            <p key={idx} className="text-xs text-neutral-300">
-                              • {item.quantity}x {item.name} <span className="text-neutral-500">(R$ {Number(item.price).toFixed(2)})</span>
-                            </p>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-4">
-                        <div className="text-right">
-                          <span className="text-[10px] text-neutral-500 uppercase block font-bold">Total</span>
-                          <span className="text-sm font-black text-amber-500">R$ {Number(ord.total_amount).toFixed(2)}</span>
-                        </div>
-
-                        <span className="bg-amber-500/10 border border-amber-500/20 text-amber-500 px-3 py-1 rounded-lg text-xs font-semibold">
-                          ⏳ {ord.status}
+            ) : (
+              <div className="divide-y divide-neutral-800">
+                {orders.map((ord) => (
+                  <div key={ord.id} className="py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-white">{ord.customer_name}</span>
+                        <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+                          {ord.status}
                         </span>
                       </div>
+                      <p className="text-[11px] text-neutral-400 mt-1">
+                        {ord.items?.map((it) => `${it.quantity}x ${it.name} (${it.size})`).join(' • ')}
+                      </p>
                     </div>
-                  ))
-                )}
+
+                    <div className="text-right">
+                      <span className="font-bold text-amber-500 text-sm block">
+                        R$ {Number(ord.total_amount).toFixed(2)}
+                      </span>
+                      <span className="text-[10px] text-neutral-500">
+                        {new Date(ord.created_at).toLocaleString('pt-BR')}
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
-            </div>
+            )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

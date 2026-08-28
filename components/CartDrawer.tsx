@@ -30,27 +30,28 @@ export default function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
 
     setIsSubmitting(true);
 
-    // 1. Salva o pedido no banco de dados para o relatório administrativo
-    try {
-      await supabase.from('orders').insert([
-        {
-          customer_name: customerName.trim(),
-          items: items.map((item) => ({
-            name: item.name,
-            quantity: item.quantity,
-            price: item.price,
-            size: item.size || 'Padrão',
-          })),
-          total_amount: total(),
-          estimated_cost_brl: 0,
-          status: 'Recebido via WhatsApp',
-        },
-      ]);
-    } catch (error) {
-      console.error('Erro ao registrar pedido:', error);
+    // 1. Salva o pedido diretamente no Supabase
+    const { error: orderError } = await supabase.from('orders').insert([
+      {
+        customer_name: customerName.trim(),
+        items: items.map((item) => ({
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+          size: item.size || 'Padrão',
+        })),
+        total_amount: total(),
+        estimated_cost_brl: 0,
+        status: 'Recebido via WhatsApp',
+      },
+    ]);
+
+    if (orderError) {
+      console.error('Erro ao registrar pedido:', orderError);
+      alert(`Aviso ao registrar pedido: ${orderError.message}`);
     }
 
-    // 2. Abre a conversa pré-formatada no WhatsApp
+    // 2. Abre a conversa no WhatsApp
     const url = generateWhatsAppLink(items, {
       name: customerName,
       address: address.trim() || undefined,
